@@ -14,6 +14,7 @@ import stats
 
 # python train_evaluator4.py --data_dir_grasps data/grasps4/preprocessed --data_dir_pcs data/pcs4 --batch_size 256 --lr 0.0001 --device_ids 1 2
 
+
 # sampler run
 parser = argparse.ArgumentParser("Train Grasp Evaluator model.")
 parser.add_argument("--tag", type=str, help="Frequency to test model.", default='evaluator')
@@ -101,9 +102,6 @@ pos_weight_test = torch.Tensor([NEG_TEST_COUNT/POS_TEST_COUNT]).to(device)
 criteria_train = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight_train, reduction='mean')
 criteria_test = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight_test, reduction='mean')
 
-criteria_translation = torch.nn.MSELoss()
-criteria_quaternion = torch.nn.MSELoss()
-
 len_trainloader = len(train_dataloader)
 len_testloader = len(test_dataloader)
 
@@ -112,9 +110,6 @@ print(f'len_testloader: {len_testloader} for {len(test_dataset)}')
 
 def train(epoch):
     train_loss = stats.AverageMeter('train/loss', writer)
-    train_loss_q = stats.AverageMeter('train/loss_quaternion', writer)
-    train_loss_t = stats.AverageMeter('train/loss_translation', writer)
-
     accuracy = stats.BinaryAccuracyWithCat('train', writer)
     # train
     model.train()
@@ -129,31 +124,22 @@ def train(epoch):
         trans = trans-pc_mean.squeeze(1)
         
         # forward pass
-        out, q_out, t_out = model(quat, trans, pcs)
+        out = model(quat, trans, pcs)
         out = out.squeeze(-1)
         #print(out.shape)
         
         # compute loss
         labels = labels.squeeze(-1)
-        loss1 = criteria_train(out, labels)
-        loss2 = criteria_quaternion(q_out, quat)
-        loss3 = criteria_translation(t_out, trans)
-
-        loss = 0.8*loss1 + 0.1*loss2 + 0.1*loss3
+        loss = criteria_train(out, labels)
         
         # backward
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-        train_loss.update(loss1.item(), quat.shape[0])
-        train_loss_q.update(loss2.item(), quat.shape[0])
-        train_loss_t.update(loss3.item(), quat.shape[0])
-
+        train_loss.update(loss.item(), quat.shape[0])
         if k % 400 == 0:
             print( train_loss.summary(epoch, some_txt=f'{k}/{len_trainloader}') )
-            print( train_loss_q.summary(epoch, some_txt=f'{k}/{len_trainloader}') )
-            print( train_loss_t.summary(epoch, some_txt=f'{k}/{len_trainloader}') )
         accuracy.update(out.squeeze().detach().cpu().numpy(), labels.detach().cpu().numpy(), cats)
 
     # print( train_loss.summary(epoch) )
@@ -164,8 +150,6 @@ def test(epoch):
     model.eval()
 
     test_loss  = stats.AverageMeter('test/loss', writer)
-    test_loss_q = stats.AverageMeter('test/loss_quaternion', writer)
-    test_loss_t = stats.AverageMeter('test/loss_translation', writer)
     accuracy = stats.BinaryAccuracyWithCat('test', writer)
 
     with torch.no_grad():
@@ -180,21 +164,17 @@ def test(epoch):
             trans = trans-pc_mean.squeeze(1)
 
             # forward pass
-            out, q_out, t_out = model(quat, trans, pcs)
+            out = model(quat, trans, pcs)
             out = out.squeeze(-1)
             #print(out.shape)
 
             # compute loss
             labels = labels.squeeze(-1)
-            loss1 = criteria_test(out, labels)
-            loss2 = criteria_quaternion(q_out, quat)
-            loss3 = criteria_translation(t_out, trans)
+            loss = criteria_test(out, labels)
 
             # print( test_loss.summary(epoch, some_txt=f'{k}/{len_testloader}') )
 
-            test_loss.update( loss1.item(), quat.shape[0] )
-            test_loss_q.update( loss2.item(), quat.shape[0] )
-            test_loss_t.update( loss3.item(), quat.shape[0] )
+            test_loss.update( loss.item(), quat.shape[0] )
             accuracy.update( out.squeeze().detach().cpu().numpy(), labels.detach().cpu().numpy(), cats )
 
     print( test_loss.summary(epoch) )
